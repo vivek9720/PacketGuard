@@ -253,8 +253,9 @@ PacketMetadata decode_packet_payload(Timestamp timestamp, ByteView bytes, std::s
         auto udp = parse_udp_datagram(transport.value(), diagnostics);
         if (udp) {
             md.udp = udp.value();
-            if (udp->source_port == 53 || udp->destination_port == 53) {
-                auto dns_payload = transport.value().slice(8, udp->payload_length);
+            const auto& datagram = udp.value();
+            if (datagram.source_port == 53 || datagram.destination_port == 53) {
+                auto dns_payload = transport.value().slice(8, datagram.payload_length);
                 if (dns_payload) { auto dns = parse_dns_message(dns_payload.value(), diagnostics); if (dns) md.dns = dns.value(); else md.notes.push_back(dns.status().message); }
             }
         } else md.notes.push_back(udp.status().message);

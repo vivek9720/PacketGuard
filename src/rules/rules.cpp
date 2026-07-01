@@ -262,7 +262,7 @@ static bool proto_matches(RuleProtocol rule, const packet::PacketMetadata& md) {
     return false;
 }
 bool rule_matches_packet(const SignatureRule& rule, const packet::PacketMetadata& md) {
-    if (!proto_matches(rule, md)) return false;
+    if (!proto_matches(rule.protocol, md)) return false;
     if (!md.ipv4) return false;
     auto forward_addr = rule.source.matches(md.ipv4->source) && rule.destination.matches(md.ipv4->destination);
     auto reverse_addr = rule.direction == "<>" && rule.source.matches(md.ipv4->destination) && rule.destination.matches(md.ipv4->source);
