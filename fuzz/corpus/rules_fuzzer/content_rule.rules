@@ -1,0 +1,1 @@
+alert udp any any -> any 53 (msg:"dns example"; content:"example.com"; sid:1002; rev:1; classtype:network-activity;)

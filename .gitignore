@@ -1,0 +1,10 @@
+build/
+out/
+*.obj
+*.o
+*.exe
+*.pdb
+*.ilk
+*.zip
+.DS_Store
+.cache/

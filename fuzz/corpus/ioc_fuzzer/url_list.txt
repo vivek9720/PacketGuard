@@ -1,0 +1,2 @@
+https://example.com/login block severity=high
+http://malware.test/payload.exe block

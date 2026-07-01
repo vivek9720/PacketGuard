@@ -1,0 +1,2 @@
+iptables -A INPUT -p tcp --dport bad -j
+{ "minimum_password_length": 14, "mfa": true }

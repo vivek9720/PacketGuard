@@ -1,0 +1,3 @@
+example.com block confidence=0.8
+sub.example.net indicator
+*.corp.test allow

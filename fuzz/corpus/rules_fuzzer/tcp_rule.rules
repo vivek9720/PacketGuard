@@ -1,0 +1,1 @@
+alert tcp any any -> 192.168.1.0/24 443 (msg:"tls to local"; sid:1003; rev:2; classtype:web-application-activity;)

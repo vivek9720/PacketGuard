@@ -1,0 +1,5 @@
+fuzz_targets:
+  - packet_fuzzer
+  - ioc_fuzzer
+  - rules_fuzzer
+  - policy_fuzzer
