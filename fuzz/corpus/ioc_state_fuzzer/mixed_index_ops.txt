@@ -1,0 +1,4 @@
+domain,updates.example.net,block
+192.168.10.0/24 allow
+sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef block
+remove-readd-lookup

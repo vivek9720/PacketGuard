@@ -1,4 +1,5 @@
 ﻿#pragma once
+#include <cstddef>
 #include <cstdint>
 #include <map>
 #include <optional>
@@ -41,8 +42,63 @@ struct MatchResult {
     std::string reason;
 };
 
+struct IndexedIndicator {
+    std::uint64_t id = 0;
+    std::uint32_t generation = 0;
+    bool active = true;
+    Indicator indicator;
+};
+
+struct IocIndexStats {
+    std::size_t total_records = 0;
+    std::size_t active_records = 0;
+    std::size_t inactive_records = 0;
+    std::size_t cidr_nodes = 0;
+    std::size_t domain_keys = 0;
+    std::size_t hash_keys = 0;
+    std::uint32_t generation = 0;
+};
+
+class IndicatorIndex {
+public:
+    std::uint64_t add(Indicator indicator);
+    std::size_t add_set(const IndicatorSet& set);
+    bool remove_id(std::uint64_t id);
+    bool remove_key(const std::string& key);
+    bool reactivate_id(std::uint64_t id);
+    bool update_role(std::uint64_t id, ListRole role);
+    bool contains_key(const std::string& key) const;
+    std::vector<MatchResult> lookup_ip(core::IPv4Address ip, const std::string& field = "ip") const;
+    std::vector<MatchResult> lookup_domain(const std::string& domain, const std::string& field = "domain") const;
+    std::vector<MatchResult> lookup_hash(const std::string& hash, const std::string& field = "hash") const;
+    std::vector<MatchResult> match_packet(const packet::PacketMetadata& metadata) const;
+    void rebuild();
+    void compact();
+    bool validate_integrity(core::Diagnostics* diagnostics = nullptr) const;
+    IocIndexStats stats() const;
+    const std::vector<IndexedIndicator>& records() const { return records_; }
+private:
+    struct CidrTrieNode {
+        int child[2] = {-1, -1};
+        std::vector<std::size_t> records;
+    };
+
+    std::uint64_t next_id_ = 1;
+    std::uint32_t generation_ = 1;
+    std::vector<IndexedIndicator> records_;
+    std::map<std::uint64_t, std::size_t> id_to_slot_;
+    std::map<std::string, std::size_t> key_to_slot_;
+    std::map<std::string, std::vector<std::size_t>> domains_;
+    std::map<std::string, std::vector<std::size_t>> hashes_;
+    std::vector<CidrTrieNode> cidr_trie_;
+
+    void rebuild_indexes();
+    void index_record(std::size_t slot);
+};
+
 std::string type_name(IocType type);
 std::string role_name(ListRole role);
+std::string indicator_key(const Indicator& indicator);
 std::optional<IocType> infer_ioc_type(const std::string& value);
 std::optional<ListRole> parse_role(const std::string& value);
 std::string normalize_domain(const std::string& domain);

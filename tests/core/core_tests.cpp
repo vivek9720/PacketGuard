@@ -25,6 +25,7 @@ void run_core_tests() {
     auto cidr = parse_cidr("192.168.1.0/24");
     require(cidr.has_value() && cidr->contains(*ip), "CIDR contains IP");
     require(!parse_ipv4("999.1.1.1"), "reject invalid IPv4");
+    require(!parse_cidr("10.0.0.0/999999999999999999999999999999"), "reject oversized CIDR prefix");
     require(to_lower("AbC") == "abc", "lowercase");
     require(trim("  x \r\n") == "x", "trim");
     std::vector<std::uint8_t> bytes = {0x45,0x00,0x00,0x14,0,0,0,0,64,6,0,0,127,0,0,1,127,0,0,1};

@@ -6,6 +6,7 @@
 #include <regex>
 #include <sstream>
 #include <stdexcept>
+#include <utility>
 
 namespace packetguard::ioc {
 using namespace packetguard::core;
@@ -15,6 +16,9 @@ std::string type_name(IocType type) {
 }
 std::string role_name(ListRole role) {
     switch (role) { case ListRole::allow: return "allow"; case ListRole::block: return "block"; default: return "indicator"; }
+}
+std::string indicator_key(const Indicator& indicator) {
+    return type_name(indicator.type) + ":" + role_name(indicator.role) + ":" + indicator.normalized;
 }
 std::optional<ListRole> parse_role(const std::string& value) {
     auto v = to_lower(trim(value));
@@ -259,6 +263,241 @@ IndicatorSet merge_indicator_sets(const std::vector<IndicatorSet>& sets) {
         }
     }
     return merged;
+}
+
+std::uint64_t IndicatorIndex::add(Indicator indicator) {
+    if (indicator.normalized.empty()) {
+        if (indicator.type == IocType::domain) indicator.normalized = normalize_domain(indicator.raw);
+        else if (indicator.type == IocType::url) indicator.normalized = normalize_url(indicator.raw);
+        else if (indicator.type == IocType::hash) indicator.normalized = normalize_hash(indicator.raw);
+    }
+    IndexedIndicator rec;
+    rec.id = next_id_++;
+    rec.generation = generation_++;
+    rec.active = true;
+    rec.indicator = std::move(indicator);
+    auto slot = records_.size();
+    records_.push_back(std::move(rec));
+    id_to_slot_[records_.back().id] = slot;
+    key_to_slot_[indicator_key(records_.back().indicator)] = slot;
+    index_record(slot);
+    return records_.back().id;
+}
+std::size_t IndicatorIndex::add_set(const IndicatorSet& set) {
+    std::size_t added = 0;
+    for (const auto& indicator : set.indicators) {
+        add(indicator);
+        ++added;
+    }
+    return added;
+}
+bool IndicatorIndex::remove_id(std::uint64_t id) {
+    auto it = id_to_slot_.find(id);
+    if (it == id_to_slot_.end()) return false;
+    auto& rec = records_[it->second];
+    if (!rec.active) return false;
+    rec.active = false;
+    rec.generation = generation_++;
+    rebuild_indexes();
+    return true;
+}
+bool IndicatorIndex::remove_key(const std::string& key) {
+    auto it = key_to_slot_.find(key);
+    if (it == key_to_slot_.end()) return false;
+    return remove_id(records_[it->second].id);
+}
+bool IndicatorIndex::reactivate_id(std::uint64_t id) {
+    auto it = id_to_slot_.find(id);
+    if (it == id_to_slot_.end()) return false;
+    auto& rec = records_[it->second];
+    if (rec.active) return false;
+    rec.active = true;
+    rec.generation = generation_++;
+    rebuild_indexes();
+    return true;
+}
+bool IndicatorIndex::update_role(std::uint64_t id, ListRole role) {
+    auto it = id_to_slot_.find(id);
+    if (it == id_to_slot_.end()) return false;
+    auto& rec = records_[it->second];
+    rec.indicator.role = role;
+    rec.generation = generation_++;
+    rebuild_indexes();
+    return true;
+}
+bool IndicatorIndex::contains_key(const std::string& key) const {
+    auto it = key_to_slot_.find(key);
+    return it != key_to_slot_.end() && records_[it->second].active;
+}
+void IndicatorIndex::index_record(std::size_t slot) {
+    if (slot >= records_.size() || !records_[slot].active) return;
+    const auto& ind = records_[slot].indicator;
+    if (ind.type == IocType::domain || ind.type == IocType::url) {
+        std::string domain = ind.normalized;
+        if (ind.type == IocType::url) {
+            auto scheme = domain.find("://");
+            auto rest = scheme == std::string::npos ? domain : domain.substr(scheme + 3);
+            auto slash = rest.find('/');
+            domain = slash == std::string::npos ? rest : rest.substr(0, slash);
+        }
+        domains_[normalize_domain(domain)].push_back(slot);
+    } else if (ind.type == IocType::hash) {
+        hashes_[normalize_hash(ind.normalized)].push_back(slot);
+    } else if (ind.type == IocType::ip || ind.type == IocType::cidr) {
+        auto range = ind.cidr;
+        if (!range && ind.ip) range = core::CIDRRange{*ind.ip, 32};
+        if (!range) return;
+        if (cidr_trie_.empty()) cidr_trie_.push_back({});
+        int node = 0;
+        auto network = range->network.value;
+        for (std::uint8_t bit = 0; bit < range->prefix; ++bit) {
+            int branch = static_cast<int>((network >> (31u - bit)) & 1u);
+            if (cidr_trie_[node].child[branch] < 0) {
+                cidr_trie_[node].child[branch] = static_cast<int>(cidr_trie_.size());
+                cidr_trie_.push_back({});
+            }
+            node = cidr_trie_[node].child[branch];
+        }
+        cidr_trie_[node].records.push_back(slot);
+    }
+}
+void IndicatorIndex::rebuild_indexes() {
+    key_to_slot_.clear();
+    domains_.clear();
+    hashes_.clear();
+    cidr_trie_.clear();
+    cidr_trie_.push_back({});
+    for (std::size_t i = 0; i < records_.size(); ++i) {
+        if (!records_[i].active) continue;
+        key_to_slot_[indicator_key(records_[i].indicator)] = i;
+        index_record(i);
+    }
+}
+void IndicatorIndex::rebuild() {
+    id_to_slot_.clear();
+    for (std::size_t i = 0; i < records_.size(); ++i) id_to_slot_[records_[i].id] = i;
+    rebuild_indexes();
+    ++generation_;
+}
+void IndicatorIndex::compact() {
+    std::vector<IndexedIndicator> compacted;
+    compacted.reserve(records_.size());
+    for (auto& rec : records_) if (rec.active) compacted.push_back(std::move(rec));
+    records_ = std::move(compacted);
+    rebuild();
+}
+std::vector<MatchResult> IndicatorIndex::lookup_ip(core::IPv4Address ip, const std::string& field) const {
+    std::vector<MatchResult> out;
+    if (cidr_trie_.empty()) return out;
+    int node = 0;
+    auto append_node = [&](int n) {
+        if (n < 0 || static_cast<std::size_t>(n) >= cidr_trie_.size()) return;
+        for (auto slot : cidr_trie_[n].records) {
+            if (slot < records_.size() && records_[slot].active) {
+                out.push_back({records_[slot].indicator, field, core::ipv4_to_string(ip), "stateful IOC index CIDR match"});
+            }
+        }
+    };
+    append_node(node);
+    for (std::uint8_t bit = 0; bit < 32 && node >= 0; ++bit) {
+        int branch = static_cast<int>((ip.value >> (31u - bit)) & 1u);
+        node = cidr_trie_[node].child[branch];
+        append_node(node);
+    }
+    return out;
+}
+std::vector<MatchResult> IndicatorIndex::lookup_domain(const std::string& domain, const std::string& field) const {
+    std::vector<MatchResult> out;
+    auto observed = normalize_domain(domain);
+    for (const auto& kv : domains_) {
+        if (!domain_matches(kv.first, observed)) continue;
+        for (auto slot : kv.second) {
+            if (slot < records_.size() && records_[slot].active) {
+                out.push_back({records_[slot].indicator, field, observed, "stateful IOC index domain match"});
+            }
+        }
+    }
+    return out;
+}
+std::vector<MatchResult> IndicatorIndex::lookup_hash(const std::string& hash, const std::string& field) const {
+    std::vector<MatchResult> out;
+    auto normalized = normalize_hash(hash);
+    auto it = hashes_.find(normalized);
+    if (it == hashes_.end()) return out;
+    for (auto slot : it->second) {
+        if (slot < records_.size() && records_[slot].active) {
+            out.push_back({records_[slot].indicator, field, normalized, "stateful IOC index hash match"});
+        }
+    }
+    return out;
+}
+std::vector<MatchResult> IndicatorIndex::match_packet(const packet::PacketMetadata& metadata) const {
+    std::vector<MatchResult> out;
+    if (metadata.ipv4) {
+        auto src = lookup_ip(metadata.ipv4->source, "ipv4.source");
+        auto dst = lookup_ip(metadata.ipv4->destination, "ipv4.destination");
+        out.insert(out.end(), src.begin(), src.end());
+        out.insert(out.end(), dst.begin(), dst.end());
+    }
+    for (const auto& name : metadata.domain_names()) {
+        auto matches = lookup_domain(name, "dns.name");
+        out.insert(out.end(), matches.begin(), matches.end());
+    }
+    std::vector<MatchResult> filtered;
+    for (const auto& match : out) {
+        bool allowed = false;
+        for (const auto& candidate : out) {
+            if (candidate.indicator.role == ListRole::allow && candidate.field == match.field && candidate.value == match.value) {
+                allowed = true;
+                break;
+            }
+        }
+        if (!allowed || match.indicator.role == ListRole::allow) filtered.push_back(match);
+    }
+    return filtered;
+}
+bool IndicatorIndex::validate_integrity(core::Diagnostics* diagnostics) const {
+    bool ok = true;
+    for (const auto& kv : id_to_slot_) {
+        if (kv.second >= records_.size() || records_[kv.second].id != kv.first) {
+            if (diagnostics) diagnostics->error("ioc.index.id", "id map points at an invalid record", kv.second);
+            ok = false;
+        }
+    }
+    for (const auto& kv : key_to_slot_) {
+        if (kv.second >= records_.size() || !records_[kv.second].active) {
+            if (diagnostics) diagnostics->error("ioc.index.key", "key map points at an inactive or invalid record", kv.second);
+            ok = false;
+        }
+    }
+    for (std::size_t i = 0; i < cidr_trie_.size(); ++i) {
+        for (int child : cidr_trie_[i].child) {
+            if (child >= static_cast<int>(cidr_trie_.size())) {
+                if (diagnostics) diagnostics->error("ioc.index.trie", "CIDR trie child points outside node array", i);
+                ok = false;
+            }
+        }
+        for (auto slot : cidr_trie_[i].records) {
+            if (slot >= records_.size() || !records_[slot].active) {
+                if (diagnostics) diagnostics->error("ioc.index.trie-record", "CIDR trie record points at an inactive or invalid record", i);
+                ok = false;
+            }
+        }
+    }
+    return ok;
+}
+IocIndexStats IndicatorIndex::stats() const {
+    IocIndexStats s;
+    s.total_records = records_.size();
+    s.cidr_nodes = cidr_trie_.size();
+    s.domain_keys = domains_.size();
+    s.hash_keys = hashes_.size();
+    s.generation = generation_;
+    for (const auto& rec : records_) {
+        if (rec.active) ++s.active_records;
+        else ++s.inactive_records;
+    }
+    return s;
 }
 
 } // namespace packetguard::ioc

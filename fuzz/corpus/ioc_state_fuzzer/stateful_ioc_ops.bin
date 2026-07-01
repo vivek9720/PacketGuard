@@ -1,0 +1,6 @@
+add cidr 10.0.0.0/8 block
+remove id 1
+add domain example.com block
+reactivate id 1
+lookup 10.2.3.4
+lookup www.example.com
