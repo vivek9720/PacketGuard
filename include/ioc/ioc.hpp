@@ -96,23 +96,6 @@ private:
     void index_record(std::size_t slot);
 };
 
-class IndicatorRefreshSession {
-public:
-    std::size_t ingest_snapshot(const std::string& text, const std::string& source = {});
-    std::size_t replace_snapshot(const std::string& text, const std::string& source = {});
-    std::vector<MatchResult> match_cached_cidr(core::IPv4Address ip, const std::string& field = "ip") const;
-    bool has_cached_cidr() const { return cached_cidr_ != nullptr; }
-    IocIndexStats stats() const { return index_.stats(); }
-    const IndicatorIndex& index() const { return index_; }
-private:
-    IndicatorIndex index_;
-    std::vector<std::uint64_t> active_ids_;
-    const IndexedIndicator* cached_cidr_ = nullptr;
-    std::uint32_t cached_generation_ = 0;
-
-    void remember_first_cidr();
-};
-
 std::string type_name(IocType type);
 std::string role_name(ListRole role);
 std::string indicator_key(const Indicator& indicator);

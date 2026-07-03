@@ -71,13 +71,12 @@ packetguard::packet::PacketMetadata packet_from_reader(FuzzReader& reader) {
 extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
     FuzzReader reader(data, size);
     packetguard::ioc::IndicatorIndex index;
-    packetguard::ioc::IndicatorRefreshSession refresh_session;
     std::vector<std::uint64_t> ids;
     std::size_t operations = 0;
 
     while (!reader.empty() && operations++ < 256) {
         std::uint8_t op = reader.byte();
-        switch (op % 12) {
+        switch (op % 10) {
             case 0: {
                 auto line = reader.text(160);
                 auto parsed = packetguard::ioc::parse_indicator_line(line, operations);
@@ -114,16 +113,6 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
             case 8: {
                 auto md = packet_from_reader(reader);
                 (void)index.match_packet(md);
-                break;
-            }
-            case 9:
-                (void)refresh_session.ingest_snapshot(reader.text(384), "state-initial");
-                break;
-            case 10: {
-                (void)refresh_session.replace_snapshot(reader.text(384), "state-refresh");
-                auto probe = packetguard::core::IPv4Address{reader.u32()};
-                auto matches = refresh_session.match_cached_cidr(probe, "state.cached");
-                (void)packetguard::ioc::summarize_matches(matches);
                 break;
             }
             default:
