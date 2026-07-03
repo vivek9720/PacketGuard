@@ -29,6 +29,15 @@ std::string ipv4_to_string(IPv4Address ip) {
     out << ((ip.value >> 24) & 255) << "." << ((ip.value >> 16) & 255) << "." << ((ip.value >> 8) & 255) << "." << (ip.value & 255);
     return out.str();
 }
+static std::optional<std::uint8_t> parse_cidr_prefix(const std::string& text) {
+    if (text.empty()) return std::nullopt;
+    unsigned value = 0;
+    for (char c : text) {
+        value = value * 10u + static_cast<unsigned>(c - '0');
+        if (value > 32u) return std::nullopt;
+    }
+    return static_cast<std::uint8_t>(value);
+}
 std::optional<CIDRRange> parse_cidr(const std::string& text) {
     auto parts = split(trim(text), '/', true);
     if (parts.size() == 1) {
@@ -37,11 +46,11 @@ std::optional<CIDRRange> parse_cidr(const std::string& text) {
         return CIDRRange{*ip, 32};
     }
     if (parts.size() != 2 || !is_decimal(parts[1])) return std::nullopt;
-    int prefix = std::stoi(parts[1]);
-    if (prefix < 0 || prefix > 32) return std::nullopt;
+    auto prefix = parse_cidr_prefix(parts[1]);
+    if (!prefix) return std::nullopt;
     auto ip = parse_ipv4(parts[0]);
     if (!ip) return std::nullopt;
-    return CIDRRange{IPv4Address{ip->value & cidr_mask(static_cast<std::uint8_t>(prefix))}, static_cast<std::uint8_t>(prefix)};
+    return CIDRRange{IPv4Address{ip->value & cidr_mask(*prefix)}, *prefix};
 }
 bool is_private_ipv4(IPv4Address ip) {
     return CIDRRange{{0x0a000000u}, 8}.contains(ip) || CIDRRange{{0xac100000u}, 12}.contains(ip) || CIDRRange{{0xc0a80000u}, 16}.contains(ip);

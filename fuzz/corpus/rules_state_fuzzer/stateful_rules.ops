@@ -1,0 +1,5 @@
+alert tcp any any -> any 80 (msg:"web"; content:"GET"; sid:200001; rev:1; classtype:web-application-activity;)
+replace
+alert udp any any -> any 53 (msg:"dns"; content:"example"; sid:200002; rev:1; classtype:network-activity;)
+delete
+snapshot

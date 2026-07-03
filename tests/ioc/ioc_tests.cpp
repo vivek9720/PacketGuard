@@ -22,4 +22,22 @@ void run_ioc_tests() {
     auto matches = match_packet(set, md);
     require_ioc(matches.size() == 1, "CIDR packet match");
     require_ioc(!parse_indicator_line("not an indicator", 2).ok(), "invalid indicator rejected");
+
+    IndicatorIndex index;
+    index.add_set(set);
+    auto indexed = index.lookup_ip(*packetguard::core::parse_ipv4("10.2.3.4"), "test.source");
+    require_ioc(indexed.size() == 1, "stateful index CIDR lookup");
+    auto domain_indicator = parse_indicator_line("domain,Example.NET,block", 4);
+    require_ioc(domain_indicator.ok(), "stateful domain indicator parses");
+    auto id = index.add(domain_indicator.value());
+    require_ioc(!index.lookup_domain("www.example.net").empty(), "stateful index domain lookup");
+    require_ioc(index.remove_id(id), "stateful index remove by id");
+    require_ioc(index.lookup_domain("www.example.net").empty(), "stateful index remove affects lookup");
+    require_ioc(index.reactivate_id(id), "stateful index reactivates record");
+    require_ioc(!index.lookup_domain("www.example.net").empty(), "stateful index reactivated lookup");
+    require_ioc(index.update_role(id, ListRole::allow), "stateful index role update");
+    index.rebuild();
+    require_ioc(index.validate_integrity(), "stateful index validates after rebuild");
+    index.compact();
+    require_ioc(index.stats().inactive_records == 0, "stateful index compact removes inactive records");
 }

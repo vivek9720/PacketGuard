@@ -4,6 +4,7 @@
 #include "core/strings.hpp"
 #include <algorithm>
 #include <cctype>
+#include <cstdint>
 #include <iomanip>
 #include <map>
 #include <set>
@@ -11,6 +12,10 @@
 
 namespace packetguard::packet {
 using namespace packetguard::core;
+
+static bool has_bytes(ByteView bytes, std::size_t offset, std::size_t length) {
+    return offset <= bytes.size() && length <= bytes.size() - offset;
+}
 
 std::string MacAddress::to_string() const {
     std::ostringstream out;
@@ -148,7 +153,7 @@ static Result<std::string> read_dns_name(ByteView bytes, std::size_t& offset, in
             break;
         }
         if (len & 0xc0) return Status::failure("invalid dns label marker");
-        if (offset + len > bytes.size()) return Status::failure("dns label outside message");
+        if (!has_bytes(bytes, offset, len)) return Status::failure("dns label outside message");
         if (!name.empty()) name.push_back('.');
         for (std::size_t i = 0; i < len; ++i) {
             unsigned char c = bytes.data()[offset + i];
@@ -162,7 +167,7 @@ static Result<std::string> read_dns_name(ByteView bytes, std::size_t& offset, in
 static Result<DnsQuestion> read_question(ByteView bytes, std::size_t& offset) {
     auto name = read_dns_name(bytes, offset);
     if (!name) return name.status();
-    if (offset + 4 > bytes.size()) return Status::failure("dns question truncated");
+    if (!has_bytes(bytes, offset, 4)) return Status::failure("dns question truncated");
     DnsQuestion q{name.value(), read_be16(bytes.data() + offset), read_be16(bytes.data() + offset + 2)};
     offset += 4;
     return q;
@@ -170,6 +175,11 @@ static Result<DnsQuestion> read_question(ByteView bytes, std::size_t& offset) {
 static std::string render_rdata(std::uint16_t type, ByteView message, ByteView data) {
     if (type == 1 && data.size() == 4) return ipv4_to_string({read_be32(data.data())});
     if ((type == 2 || type == 5 || type == 12) && data.size() > 0) {
+        const auto message_begin = reinterpret_cast<std::uintptr_t>(message.data());
+        const auto data_begin = reinterpret_cast<std::uintptr_t>(data.data());
+        if (!message.data() || !data.data() || data_begin < message_begin || data.size() > message.size() || data_begin - message_begin > message.size() - data.size()) {
+            return bytes_to_hex(data.data(), data.size());
+        }
         std::size_t off = static_cast<std::size_t>(data.data() - message.data());
         auto name = read_dns_name(message, off);
         if (name) return name.value();
@@ -179,7 +189,7 @@ static std::string render_rdata(std::uint16_t type, ByteView message, ByteView d
         std::size_t off = 0;
         while (off < data.size()) {
             std::uint8_t len = data.data()[off++];
-            if (off + len > data.size()) break;
+            if (len > data.size() - off) break;
             if (!txt.empty()) txt.push_back(' ');
             txt.append(reinterpret_cast<const char*>(data.data() + off), reinterpret_cast<const char*>(data.data() + off + len));
             off += len;
@@ -191,7 +201,7 @@ static std::string render_rdata(std::uint16_t type, ByteView message, ByteView d
 static Result<DnsRecord> read_record(ByteView bytes, std::size_t& offset) {
     auto name = read_dns_name(bytes, offset);
     if (!name) return name.status();
-    if (offset + 10 > bytes.size()) return Status::failure("dns record truncated");
+    if (!has_bytes(bytes, offset, 10)) return Status::failure("dns record truncated");
     DnsRecord r;
     r.name = name.value();
     r.type = read_be16(bytes.data() + offset);
@@ -199,7 +209,7 @@ static Result<DnsRecord> read_record(ByteView bytes, std::size_t& offset) {
     r.ttl = read_be32(bytes.data() + offset + 4);
     std::uint16_t len = read_be16(bytes.data() + offset + 8);
     offset += 10;
-    if (offset + len > bytes.size()) return Status::failure("dns rdata truncated");
+    if (!has_bytes(bytes, offset, len)) return Status::failure("dns rdata truncated");
     r.data.assign(bytes.data() + offset, bytes.data() + offset + len);
     auto view = bytes.slice(offset, len);
     if (view) r.data_text = render_rdata(r.type, bytes, view.value());

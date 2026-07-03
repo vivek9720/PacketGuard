@@ -56,18 +56,28 @@ std::string PortExpr::to_string() const {
 }
 static core::Result<std::pair<std::uint16_t, std::uint16_t>> parse_port_range(const std::string& token) {
     auto t = trim(token);
+    auto parse_port_number = [](const std::string& value) -> core::Result<std::uint16_t> {
+        if (!is_decimal(value)) return Status::failure("invalid port");
+        unsigned int parsed = 0;
+        for (char c : value) {
+            parsed = parsed * 10u + static_cast<unsigned int>(c - '0');
+            if (parsed > 65535u) return Status::failure("port outside range");
+        }
+        return static_cast<std::uint16_t>(parsed);
+    };
     auto colon = t.find(':');
     if (colon == std::string::npos) {
-        if (!is_decimal(t)) return Status::failure("invalid port");
-        int p = std::stoi(t);
-        if (p < 0 || p > 65535) return Status::failure("port outside range");
-        return std::make_pair(static_cast<std::uint16_t>(p), static_cast<std::uint16_t>(p));
+        auto p = parse_port_number(t);
+        if (!p) return p.status();
+        return std::make_pair(p.value(), p.value());
     }
     auto left = t.substr(0, colon), right = t.substr(colon + 1);
-    int lo = left.empty() ? 0 : std::stoi(left);
-    int hi = right.empty() ? 65535 : std::stoi(right);
-    if (lo < 0 || hi > 65535 || lo > hi) return Status::failure("invalid port range");
-    return std::make_pair(static_cast<std::uint16_t>(lo), static_cast<std::uint16_t>(hi));
+    auto lo = left.empty() ? core::Result<std::uint16_t>(static_cast<std::uint16_t>(0)) : parse_port_number(left);
+    auto hi = right.empty() ? core::Result<std::uint16_t>(static_cast<std::uint16_t>(65535)) : parse_port_number(right);
+    if (!lo) return lo.status();
+    if (!hi) return hi.status();
+    if (lo.value() > hi.value()) return Status::failure("invalid port range");
+    return std::make_pair(lo.value(), hi.value());
 }
 core::Result<PortExpr> parse_port_expr(const std::string& token) {
     PortExpr expr;
@@ -150,6 +160,15 @@ static std::optional<std::string> option_value(const SignatureRule& rule, const 
     for (const auto& opt : rule.options) if (opt.key == key) return opt.value;
     return std::nullopt;
 }
+static std::optional<std::uint32_t> parse_u32_option(const std::string& value) {
+    if (!is_decimal(value)) return std::nullopt;
+    std::uint64_t parsed = 0;
+    for (char c : value) {
+        parsed = parsed * 10u + static_cast<unsigned int>(c - '0');
+        if (parsed > 0xffffffffull) return std::nullopt;
+    }
+    return static_cast<std::uint32_t>(parsed);
+}
 core::Result<SignatureRule> parse_rule_line(const std::string& line, std::size_t line_number) {
     auto clean = trim(remove_comment(line));
     if (clean.empty()) return Status::failure("empty rule line");
@@ -175,8 +194,8 @@ core::Result<SignatureRule> parse_rule_line(const std::string& line, std::size_t
     rule.options = parse_options(body, &local, line_number);
     if (auto v = option_value(rule, "msg")) rule.msg = *v;
     if (auto v = option_value(rule, "content")) rule.content = *v;
-    if (auto v = option_value(rule, "sid")) { if (is_decimal(*v)) rule.sid = static_cast<std::uint32_t>(std::stoul(*v)); }
-    if (auto v = option_value(rule, "rev")) { if (is_decimal(*v)) rule.rev = static_cast<std::uint32_t>(std::stoul(*v)); }
+    if (auto v = option_value(rule, "sid")) { if (auto parsed = parse_u32_option(*v)) rule.sid = *parsed; }
+    if (auto v = option_value(rule, "rev")) { if (auto parsed = parse_u32_option(*v)) rule.rev = *parsed; }
     if (auto v = option_value(rule, "classtype")) rule.classtype = *v;
     return rule;
 }

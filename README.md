@@ -24,7 +24,7 @@ PacketGuard is an offline C++17 toolkit for inspecting local defensive security 
 
 - `core`: byte readers, safe slicing, diagnostics, status values, checksums, string helpers, timestamps, IPv4, and CIDR helpers.
 - `packet`: PCAP, Ethernet, IPv4, TCP, UDP, DNS decoding, metadata extraction, and summaries.
-- `ioc`: indicator parsing, normalization, duplicate detection, allow/block roles, and packet metadata matching.
+- `ioc`: indicator parsing, normalization, duplicate detection, allow/block roles, stateful indexing, and packet metadata matching.
 - `rules`: IDS-style lexer/parser behavior, normalization, validation, duplicate detection, and packet matching helpers.
 - `policy`: firewall and policy parsing, ordering analysis, duplicate and shadowed-rule detection, and summaries.
 - `tools`: command-line programs that call the reusable library code.
@@ -70,6 +70,7 @@ CXX=clang++ OUT=$PWD/out LIB_FUZZING_ENGINE=-fsanitize=fuzzer \
 
 out/packet_fuzzer fuzz/corpus/packet_fuzzer -dict=fuzz/dictionary.txt -runs=1000
 out/ioc_fuzzer fuzz/corpus/ioc_fuzzer -dict=fuzz/dictionary.txt -runs=1000
+out/ioc_state_fuzzer fuzz/corpus/ioc_state_fuzzer -dict=fuzz/dictionary.txt -runs=1000
 out/rules_fuzzer fuzz/corpus/rules_fuzzer -dict=fuzz/dictionary.txt -runs=1000
 out/policy_fuzzer fuzz/corpus/policy_fuzzer -dict=fuzz/dictionary.txt -runs=1000
 ```

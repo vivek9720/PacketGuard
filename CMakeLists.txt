@@ -15,6 +15,7 @@ add_library(packetguard
   src/packet/packet.cpp
   src/ioc/ioc.cpp
   src/rules/rules.cpp
+  src/rules/rule_set_manager.cpp
   src/policy/policy.cpp
 )
 target_include_directories(packetguard PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)

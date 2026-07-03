@@ -6,11 +6,14 @@
 namespace packetguard::core {
 
 Result<std::uint8_t> ByteView::at(std::size_t offset) const {
+    if (!data_ && size_ != 0) return Status::failure("invalid byte view");
     if (offset >= size_) return Status::failure("byte offset outside view");
     return data_[offset];
 }
 Result<ByteView> ByteView::slice(std::size_t offset, std::size_t length) const {
+    if (!data_ && size_ != 0) return Status::failure("invalid byte view");
     if (offset > size_ || length > size_ - offset) return Status::failure("slice outside view");
+    if (length == 0) return ByteView(data_, 0);
     return ByteView(data_ + offset, length);
 }
 std::vector<std::uint8_t> ByteView::to_vector() const {
@@ -19,6 +22,7 @@ std::vector<std::uint8_t> ByteView::to_vector() const {
 }
 std::string ByteView::ascii_lossy() const {
     std::string s;
+    if (!data_ && size_ != 0) return s;
     s.reserve(size_);
     for (std::size_t i = 0; i < size_; ++i) {
         const auto c = data_[i];

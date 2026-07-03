@@ -1,0 +1,80 @@
+diff --git a/include/ioc/ioc.hpp b/include/ioc/ioc.hpp
+--- a/include/ioc/ioc.hpp
++++ b/include/ioc/ioc.hpp
+@@ -101,15 +101,16 @@
+     std::size_t ingest_snapshot(const std::string& text, const std::string& source = {});
+     std::size_t replace_snapshot(const std::string& text, const std::string& source = {});
+     std::vector<MatchResult> match_cached_cidr(core::IPv4Address ip, const std::string& field = "ip") const;
+-    bool has_cached_cidr() const { return cached_cidr_ != nullptr; }
++    bool has_cached_cidr() const { return cached_cidr_id_ != 0; }
+     IocIndexStats stats() const { return index_.stats(); }
+     const IndicatorIndex& index() const { return index_; }
+ private:
+     IndicatorIndex index_;
+     std::vector<std::uint64_t> active_ids_;
+-    const IndexedIndicator* cached_cidr_ = nullptr;
++    std::uint64_t cached_cidr_id_ = 0;
+     std::uint32_t cached_generation_ = 0;
+ 
++    const IndexedIndicator* cached_record() const;
+     void remember_first_cidr();
+ };
+ 
+diff --git a/src/ioc/ioc.cpp b/src/ioc/ioc.cpp
+--- a/src/ioc/ioc.cpp
++++ b/src/ioc/ioc.cpp
+@@ -500,11 +500,20 @@
+     return s;
+ }
+ 
++const IndexedIndicator* IndicatorRefreshSession::cached_record() const {
++    if (cached_cidr_id_ == 0) return nullptr;
++    for (const auto& record : index_.records()) {
++        if (record.id == cached_cidr_id_ && record.active) return &record;
++    }
++    return nullptr;
++}
+ void IndicatorRefreshSession::remember_first_cidr() {
++    cached_cidr_id_ = 0;
++    cached_generation_ = 0;
+     for (const auto& record : index_.records()) {
+         if (!record.active) continue;
+         if (record.indicator.type == IocType::cidr || record.indicator.type == IocType::ip) {
+-            cached_cidr_ = &record;
++            cached_cidr_id_ = record.id;
+             cached_generation_ = record.generation;
+             return;
+         }
+@@ -517,7 +526,7 @@
+         active_ids_.push_back(index_.add(indicator));
+         ++added;
+     }
+-    if (!cached_cidr_) remember_first_cidr();
++    if (!cached_record()) remember_first_cidr();
+     return added;
+ }
+ std::size_t IndicatorRefreshSession::replace_snapshot(const std::string& text, const std::string& source) {
+@@ -533,17 +542,17 @@
+         active_ids_.push_back(index_.add(indicator));
+         ++added;
+     }
+-    if (!cached_cidr_) remember_first_cidr();
++    if (!cached_record()) remember_first_cidr();
+     return added;
+ }
+ std::vector<MatchResult> IndicatorRefreshSession::match_cached_cidr(core::IPv4Address ip, const std::string& field) const {
+     std::vector<MatchResult> out;
+-    if (!cached_cidr_) return out;
+-    if (!cached_cidr_->active) return out;
+-    auto range = cached_cidr_->indicator.cidr;
+-    if (!range && cached_cidr_->indicator.ip) range = core::CIDRRange{*cached_cidr_->indicator.ip, 32};
++    const auto* record = cached_record();
++    if (!record) return out;
++    auto range = record->indicator.cidr;
++    if (!range && record->indicator.ip) range = core::CIDRRange{*record->indicator.ip, 32};
+     if (range && range->contains(ip)) {
+-        out.push_back({cached_cidr_->indicator, field, core::ipv4_to_string(ip), "cached IOC refresh-session CIDR match"});
++        out.push_back({record->indicator, field, core::ipv4_to_string(ip), "cached IOC refresh-session CIDR match"});
+     }
+     (void)cached_generation_;
+     return out;

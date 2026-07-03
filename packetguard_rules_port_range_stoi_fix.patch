@@ -1,0 +1,54 @@
+diff --git a/src/rules/rules.cpp b/src/rules/rules.cpp
+index 9e25937..8008b7d 100644
+--- a/src/rules/rules.cpp
++++ b/src/rules/rules.cpp
+@@ -56,18 +56,28 @@ std::string PortExpr::to_string() const {
+ }
+ static core::Result<std::pair<std::uint16_t, std::uint16_t>> parse_port_range(const std::string& token) {
+     auto t = trim(token);
++    auto parse_port_number = [](const std::string& value) -> core::Result<std::uint16_t> {
++        if (!is_decimal(value)) return Status::failure("invalid port");
++        unsigned int parsed = 0;
++        for (char c : value) {
++            parsed = parsed * 10u + static_cast<unsigned int>(c - '0');
++            if (parsed > 65535u) return Status::failure("port outside range");
++        }
++        return static_cast<std::uint16_t>(parsed);
++    };
+     auto colon = t.find(':');
+     if (colon == std::string::npos) {
+-        if (!is_decimal(t)) return Status::failure("invalid port");
+-        int p = std::stoi(t);
+-        if (p < 0 || p > 65535) return Status::failure("port outside range");
+-        return std::make_pair(static_cast<std::uint16_t>(p), static_cast<std::uint16_t>(p));
++        auto p = parse_port_number(t);
++        if (!p) return p.status();
++        return std::make_pair(p.value(), p.value());
+     }
+     auto left = t.substr(0, colon), right = t.substr(colon + 1);
+-    int lo = left.empty() ? 0 : std::stoi(left);
+-    int hi = right.empty() ? 65535 : std::stoi(right);
+-    if (lo < 0 || hi > 65535 || lo > hi) return Status::failure("invalid port range");
+-    return std::make_pair(static_cast<std::uint16_t>(lo), static_cast<std::uint16_t>(hi));
++    auto lo = left.empty() ? core::Result<std::uint16_t>(static_cast<std::uint16_t>(0)) : parse_port_number(left);
++    auto hi = right.empty() ? core::Result<std::uint16_t>(static_cast<std::uint16_t>(65535)) : parse_port_number(right);
++    if (!lo) return lo.status();
++    if (!hi) return hi.status();
++    if (lo.value() > hi.value()) return Status::failure("invalid port range");
++    return std::make_pair(lo.value(), hi.value());
+ }
+ core::Result<PortExpr> parse_port_expr(const std::string& token) {
+     PortExpr expr;
+diff --git a/tests/rules/rules_tests.cpp b/tests/rules/rules_tests.cpp
+index 2b89b4e..30ffe99 100644
+--- a/tests/rules/rules_tests.cpp
++++ b/tests/rules/rules_tests.cpp
+@@ -19,4 +19,8 @@ void run_rules_tests() {
+     require_rules(!file.diagnostics.empty(), "duplicate rule diagnostic");
+     auto bad = parse_rule_line("alert tcp any any", 2);
+     require_rules(!bad.ok(), "bad rule rejected");
++    auto bad_port = parse_rule_line("alert tcp any abc -> any 80 (msg:\"bad port\"; sid:1002; rev:1;)", 3);
++    require_rules(!bad_port.ok(), "alphabetic source port rejected without throwing");
++    auto bad_range = parse_rule_line("alert tcp any 1:abc -> any 80 (msg:\"bad range\"; sid:1003; rev:1;)", 4);
++    require_rules(!bad_range.ok(), "alphabetic port range rejected without throwing");
+ }
