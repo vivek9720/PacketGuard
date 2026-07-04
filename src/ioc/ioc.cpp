@@ -500,4 +500,30 @@ IocIndexStats IndicatorIndex::stats() const {
     return s;
 }
 
+std::size_t IndicatorRefreshSession::ingest_snapshot(const std::string& text, const std::string& source) {
+    current_set_ = parse_indicator_text(text, source);
+    index_ = IndicatorIndex{};
+    auto added = index_.add_set(current_set_);
+    ++refresh_generation_;
+    return added;
+}
+
+std::size_t IndicatorRefreshSession::replace_snapshot(const std::string& text, const std::string& source) {
+    return ingest_snapshot(text, source);
+}
+
+std::vector<MatchResult> IndicatorRefreshSession::match_cached_cidr(core::IPv4Address ip, const std::string& field) const {
+    return index_.lookup_ip(ip, field);
+}
+
+std::vector<MatchResult> IndicatorRefreshSession::match_packet(const packet::PacketMetadata& metadata) const {
+    return index_.match_packet(metadata);
+}
+
+IocIndexStats IndicatorRefreshSession::stats() const {
+    auto s = index_.stats();
+    s.generation = refresh_generation_;
+    return s;
+}
+
 } // namespace packetguard::ioc
